@@ -1,5 +1,5 @@
 ;***************************************************************************
-; main.asm – COE538 eebot Project (single-file version)
+; main.asm – COE538 eebot Project (single-file version, cleaned)
 ;   - Guider + LCD + ADC
 ;   - Motor control + TOF timing
 ;   - Current behaviour: read guider sensors and display on LCD
@@ -8,64 +8,40 @@
         XDEF    Entry, _Startup
         ABSENTRY Entry
 
-        INCLUDE 'derivative.inc'
+        INCLUDE 'derivative.inc'    ; defines ATDCTLx, PORTA, TSCRx, etc.
 
 
 ;===========================================================================
-; EQUATES
+; PROJECT-SPECIFIC EQUATES (NO REDEFINING CHIP REGISTERS)
 ;===========================================================================
 
-;----------------------------
-; A/D Converter Registers
-;----------------------------
-ATDCTL2         EQU     $0082
-ATDCTL3         EQU     $0083
-ATDCTL4         EQU     $0084
-ATDCTL5         EQU     $0085
-ATDSTAT0        EQU     $0086
+; LCD commands
+CLEAR_HOME      EQU     $01
+INTERFACE       EQU     $38
+CURSOR_OFF      EQU     $0C
+SHIFT_OFF       EQU     $06
+LCD_SEC_LINE    EQU     64          ; second line DDRAM address (decimal)
 
-ATDDR0L         EQU     $0091
-ATDDR1L         EQU     $0093
-ATDDR2L         EQU     $0095
-ATDDR3L         EQU     $0097
+; Bits on PTJ for LCD
+LCD_E           EQU     $80         ; bit 7
+LCD_RS          EQU     $40         ; bit 6
 
-;----------------------------
-; PORTA – sensor select / motor direction / LED enable
-;----------------------------
-PORTA           EQU     $0000
-
-;----------------------------
-; LCD Equates
-;----------------------------
-CLEAR_HOME      EQU     $01         ; Clear display & home cursor
-INTERFACE       EQU     $38         ; 8-bit, 2-line display
-CURSOR_OFF      EQU     $0C         ; Display on, cursor off
-SHIFT_OFF       EQU     $06         ; Increment, no shift
-LCD_SEC_LINE    EQU     64          ; Second line DDRAM address
-
-LCD_CNTR        EQU     PTJ         ; Control port: E = PJ7, RS = PJ6
-LCD_DAT         EQU     PORTB       ; Data port
-LCD_E           EQU     $80
-LCD_RS          EQU     $40
-
+; “Generic” chars
 NULL            EQU     $00
 SPACE           EQU     ' '
 
-;----------------------------
-; Motor control equates
-;----------------------------
-FWD_INT         EQU     69          ; ~3.0 s forward   (TOF ticks)
+; Motor timing (TOF ticks at ~23 Hz)
+FWD_INT         EQU     69          ; ~3.0 s forward
 REV_INT         EQU     69          ; ~3.0 s reverse
-FWD_TRN_INT     EQU     46          ; ~2.0 s fwd turn
-REV_TRN_INT     EQU     46          ; ~2.0 s rev turn
+FWD_TRN_INT     EQU     46          ; ~2.0 s forward turn
+REV_TRN_INT     EQU     46          ; ~2.0 s reverse turn
 
+; Motor bit masks (these assume hardware wired like labs)
 MOTOR_DIR_MASK   EQU    %00000011   ; PA0 = PORT_DIR, PA1 = STAR_DIR
 MOTOR_SPEED_MASK EQU    %00110000   ; PTT4/5 = motor enable / speed
 
-;----------------------------
 ; LCD buffer positions for sensor display
-;----------------------------
-; TOP_LINE and BOT_LINE are RAM buffers (defined below).
+; TOP_LINE and BOT_LINE are RAM labels defined below.
 DP_FRONT_SENSOR  EQU    TOP_LINE+3
 DP_PORT_SENSOR   EQU    BOT_LINE+0
 DP_MID_SENSOR    EQU    BOT_LINE+3
@@ -173,10 +149,11 @@ INIT:
 
 ;---------------------------------------------------------------------------
 ; openADC – Initialize ADC for guider reading
+;   Uses ATDCTL2, ATDCTL3, ATDCTL4 from derivative.inc
 ;---------------------------------------------------------------------------
 openADC:
         MOVB    #$80,ATDCTL2           ; power up ADC
-        LDY     #1                     ; 50 µs delay
+        LDY     #1                     ; ~50 µs delay
         JSR     del_50us
 
         MOVB    #$20,ATDCTL3           ; 4 conversions on AN1
@@ -236,10 +213,6 @@ STRCPY_EXIT:
 
 ;---------------------------------------------------------------------------
 ; READ_SENSORS – read all 5 guider sensors into RAM
-;
-; Uses:
-;   SENSOR_LINE, SENSOR_BOW, SENSOR_PORT, SENSOR_MID, SENSOR_STBD
-;   SENSOR_NUM
 ;---------------------------------------------------------------------------
 READ_SENSORS:
         CLR     SENSOR_NUM             ; sensor index = 0
@@ -379,6 +352,7 @@ BIN2ASC:
 
 ;---------------------------------------------------------------------------
 ; LCD Routines
+;   Uses PTJ (LCD_CNTR) and PORTB (LCD_DAT) from derivative.inc
 ;---------------------------------------------------------------------------
 openLCD:
         LDY     #2000                   ; ~100 ms
@@ -402,13 +376,13 @@ openLCD:
 
 
 cmd2LCD:
-        BCLR    LCD_CNTR,LCD_RS        ; RS=0 → command
+        BCLR    PTJ,LCD_RS             ; RS=0 → command
         JSR     dataMov
         RTS
 
 
 putcLCD:
-        BSET    LCD_CNTR,LCD_RS        ; RS=1 → data
+        BSET    PTJ,LCD_RS             ; RS=1 → data
         JSR     dataMov
         RTS
 
@@ -424,12 +398,12 @@ donePS:
 
 
 dataMov:
-        BSET    LCD_CNTR,LCD_E         ; E high
-        STAA    LCD_DAT                ; put data on bus
+        BSET    PTJ,LCD_E              ; E high
+        STAA    PORTB                  ; put data on bus
         NOP
         NOP
         NOP
-        BCLR    LCD_CNTR,LCD_E         ; E low (latch)
+        BCLR    PTJ,LCD_E              ; E low (latch)
 
         LDY     #1
         JSR     del_50us
@@ -464,9 +438,6 @@ iloop:
 ; MOTOR CONTROL ROUTINES
 ;===========================================================================
 
-;---------------------------------------------------------------------------
-; MOTOR_INIT – configure motor pins and ensure motors off
-;---------------------------------------------------------------------------
 MOTOR_INIT:
         BSET    DDRA,MOTOR_DIR_MASK    ; direction pins output
         BSET    DDRT,MOTOR_SPEED_MASK  ; speed pins output
@@ -474,9 +445,6 @@ MOTOR_INIT:
         RTS
 
 
-;---------------------------------------------------------------------------
-; INIT_FWD – forward motion for FWD_INT ticks
-;---------------------------------------------------------------------------
 INIT_FWD:
         BCLR    PORTA,MOTOR_DIR_MASK   ; FWD direction for both motors
         BSET    PTT,MOTOR_SPEED_MASK   ; turn on drive motors
@@ -487,9 +455,6 @@ INIT_FWD:
         RTS
 
 
-;---------------------------------------------------------------------------
-; INIT_REV – reverse motion for REV_INT ticks
-;---------------------------------------------------------------------------
 INIT_REV:
         BSET    PORTA,MOTOR_DIR_MASK   ; REV direction for both motors
         BSET    PTT,MOTOR_SPEED_MASK   ; turn on drive motors
@@ -500,21 +465,13 @@ INIT_REV:
         RTS
 
 
-;---------------------------------------------------------------------------
-; INIT_ALL_STP – stop both motors
-;---------------------------------------------------------------------------
 INIT_ALL_STP:
         BCLR    PTT,MOTOR_SPEED_MASK   ; motors off
         RTS
 
 
-;---------------------------------------------------------------------------
-; INIT_FWD_TRN – spin in place for FWD_TRN_INT ticks
-;   (example: starboard reversed, port forward)
-;---------------------------------------------------------------------------
 INIT_FWD_TRN:
         BSET    PORTA,%00000010        ; REV dir for starboard motor
-        ; (assumes port motor remains forward)
 
         LDAA    TOF_COUNTER
         ADDA    #FWD_TRN_INT
@@ -522,13 +479,8 @@ INIT_FWD_TRN:
         RTS
 
 
-;---------------------------------------------------------------------------
-; INIT_REV_TRN – spin opposite direction for REV_TRN_INT ticks
-;   (example: starboard forward, port reverse)
-;---------------------------------------------------------------------------
 INIT_REV_TRN:
         BCLR    PORTA,%00000010        ; FWD dir for starboard motor
-        ; (assumes port motor reversed externally)
 
         LDAA    TOF_COUNTER
         ADDA    #REV_TRN_INT
@@ -540,24 +492,16 @@ INIT_REV_TRN:
 ; TIMER / TOF ROUTINES
 ;===========================================================================
 
-;---------------------------------------------------------------------------
-; ENABLE_TOF – enable main timer and TOF interrupt
-;   Uses TSCR1, TSCR2, TFLG2 from derivative.inc
-;---------------------------------------------------------------------------
 ENABLE_TOF:
         LDAA    #%10000000
         STAA    TSCR1                 ; TEN=1, enable timer
-        STAA    TFLG2                 ; clear TOF flag by writing 1
+        STAA    TFLG2                 ; clear TOF flag
 
         LDAA    #%10000100            ; TOI=1, prescale=÷16
         STAA    TSCR2
         RTS
 
 
-;---------------------------------------------------------------------------
-; TOF_ISR – Timer Overflow ISR
-;   Increments TOF_COUNTER every overflow
-;---------------------------------------------------------------------------
 TOF_ISR:
         INC     TOF_COUNTER
         LDAA    #%10000000
