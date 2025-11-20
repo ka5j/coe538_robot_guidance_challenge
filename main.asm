@@ -1,66 +1,96 @@
 ;***************************************************************************
-;* main.asm – Current Base Project File (COE538 eebot Project)             *
+; main.asm – COE538 eebot Project (current stage)
+;   - Modularized: guider, motors, timers
+;   - Behaviour: read guider sensors and display on LCD
 ;***************************************************************************
 
         XDEF    Entry, _Startup
         ABSENTRY Entry
 
         INCLUDE 'derivative.inc'
-        INCLUDE 'read_guider.inc'     ; Guider + LCD + ADC subroutine library
+        INCLUDE 'read_guider.inc'      ; guider + LCD + ADC
+        INCLUDE 'motors.inc'           ; motor control routines
+        INCLUDE 'timers.inc'           ; TOF timing + ISR
 
 
 ;===========================================================================
 ; RAM VARIABLE SECTION
 ;===========================================================================
 
-        ORG     $1000                 ; Start of RAM (adjust if needed)
+        ORG     $1000                  ; Start of RAM (adjust if needed)
 
-; Guider sensor storage
+;--- Guider sensors ---
 SENSOR_LINE     DS.B    1
 SENSOR_BOW      DS.B    1
 SENSOR_PORT     DS.B    1
 SENSOR_MID      DS.B    1
 SENSOR_STBD     DS.B    1
 
-SENSOR_NUM      DS.B    1            ; Internal counter for READ_SENSORS
+SENSOR_NUM      DS.B    1              ; internal to READ_SENSORS
 
-; LCD shadow buffers (20 chars + NULL)
-TOP_LINE        DS.B    21            ; 20 chars + NULL terminator
+;--- LCD shadow buffers (20 chars + NULL) ---
+TOP_LINE        DS.B    21             ; 20 chars + NULL
 BOT_LINE        DS.B    21
 
-TEMP            DS.B    1             ; Scratch byte used by SELECT_SENSOR
+TEMP            DS.B    1              ; scratch for SELECT_SENSOR, etc.
+
+;--- Timer / state-related variables (from Lab 5 timing idea) ---
+TOF_COUNTER     DS.B    1              ; increments in TOF_ISR (~23 Hz)
+
+T_FWD           DS.B    1              ; alarm time for forward
+T_REV           DS.B    1              ; alarm time for reverse
+T_FWD_TRN       DS.B    1              ; alarm time for forward turn
+T_REV_TRN       DS.B    1              ; alarm time for reverse turn
+
+CRNT_STATE      DS.B    1              ; (reserved for later state machine)
 
 
 ;===========================================================================
 ; CODE SECTION
 ;===========================================================================
 
-        ORG     $4000                 ; Start of program code in Flash
+        ORG     $4000                  ; Start of program code in Flash
 
 Entry:
 _Startup:
-        LDS     #$4000                ; Initialize stack pointer
+        LDS     #$4000                 ; Initialize stack pointer
 
-        JSR     INIT                  ; Initialize ports (from read_guider.inc)
-        JSR     openADC               ; Initialize ADC module
-        JSR     openLCD               ; Initialize LCD controller
-        JSR     CLR_LCD_BUF           ; Clear LCD shadow buffer
+        ;--- Hardware / peripheral init ---
+        JSR     INIT                   ; guider/LCD-related ports (from read_guider.inc)
+        JSR     MOTOR_INIT             ; motor DDRs, motors off
+        JSR     openADC                ; ADC configuration
+        JSR     openLCD                ; LCD initialization
+        JSR     CLR_LCD_BUF            ; clear shadow LCD buffers
+        JSR     ENABLE_TOF             ; enable TOF-based timing
 
-        CLI                            ; Enable global interrupts
+        CLR     TOF_COUNTER            ; start TOF counter at 0
+        CLR     CRNT_STATE             ; we will use later for robot states
+
+        CLI                             ; Enable global interrupts
 
 
 ;===========================================================================
-; MAIN LOOP – Current Stage: Sensor Debug Display
+; MAIN LOOP – CURRENT STAGE: SENSOR DEBUG ONLY
 ;===========================================================================
 
 MAIN:
-        JSR     G_LEDS_ON             ; Turn guider LEDs ON
-        JSR     READ_SENSORS          ; Read all 5 guider sensors
-        JSR     G_LEDS_OFF            ; Turn guider LEDs OFF
+        JSR     G_LEDS_ON              ; illuminate guider LEDs
+        JSR     READ_SENSORS           ; read all 5 sensors
+        JSR     G_LEDS_OFF             ; LEDs off
 
-        JSR     DISPLAY_SENSORS       ; Update LCD with sensor values
+        JSR     DISPLAY_SENSORS        ; show sensor values on LCD
 
-        BRA     MAIN                  ; Repeat forever
+        BRA     MAIN                   ; loop forever
 
+
+;===========================================================================
+; INTERRUPT VECTORS
+;===========================================================================
+
+        ORG     $FFDE
+        DC.W    TOF_ISR                ; Timer Overflow Interrupt Vector
+
+        ORG     $FFFE
+        DC.W    Entry                  ; Reset Vector
 
         END
